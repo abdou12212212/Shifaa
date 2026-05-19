@@ -19,10 +19,6 @@ const NotificationRoutes = require('./routes/NotificationRoutes')
 const PatientRoutes = require('./routes/PatientRoutes')
 const TestRoutes = require('./routes/TestRoutes')
 const Admin1Routes = require('./routes/Admin/AdminRoutes')
-const path = require('path');
-
-
-
 
 
 //MIddlewares
@@ -48,7 +44,7 @@ app.use('/admin', Admin1Routes)
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 //Server
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Server running on http://0.0.0.0:${PORT}`);
 });
