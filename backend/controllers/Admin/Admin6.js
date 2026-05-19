@@ -39,7 +39,6 @@ exports.getAppointments = async (req, res) => {
 
     let params = [];
 
-    // Add filters
     if (status && status !== 'all') {
       query += ' AND a.status = ?';
       params.push(status);
@@ -141,7 +140,6 @@ exports.updateAppointment = async (req, res) => {
       assistant_id
     } = req.body;
 
-    // Convert ISO datetime to MySQL format (YYYY-MM-DD HH:MM:SS)
     let formattedDatetime = appointment_datetime;
     if (appointment_datetime) {
       const date = new Date(appointment_datetime);
@@ -259,7 +257,6 @@ exports.uploadFile = async (req, res) => {
       });
     }
 
-    // Generate file URL (relative path from uploads folder)
     const fileUrl = `/uploads/test-results/${req.file.filename}`;
 
     res.json({
@@ -282,53 +279,169 @@ exports.uploadFile = async (req, res) => {
   }
 };
 
-// Upload test results (save file URL to database)
+// ============= الدالة المصححة: uploadTestResults =============
 exports.uploadTestResults = async (req, res) => {
   try {
-    const { appointment_id, test_id, result_file_url } = req.body;
+    const { appointment_id, test_id, result_file_url, test_ids } = req.body;
 
-    if (!appointment_id || !result_file_url) {
+    // التحقق من البيانات المطلوبة
+    if (!appointment_id) {
       return res.status(400).json({
         success: false,
-        message: 'البيانات المطلوبة ناقصة'
+        message: 'معرّف الموعد مطلوب'
       });
     }
 
-    // Check if result already exists
+    if (!result_file_url) {
+      return res.status(400).json({
+        success: false,
+        message: 'رابط ملف النتيجة مطلوب'
+      });
+    }
+
+    // استخدام test_id مفرد أو test_ids متعدد
+    let testIdToUse = test_id || test_ids;
+    
+    // إذا كان test_ids عبارة عن array, نأخذ أول عنصر
+    if (Array.isArray(testIdToUse) && testIdToUse.length > 0) {
+      testIdToUse = testIdToUse[0];
+    }
+
+    // التحقق من وجود test_id
+    if (!testIdToUse || testIdToUse === 'null' || testIdToUse === 'undefined') {
+      // محاولة الحصول على test_id من Appointment_Tests
+      const [tests] = await db.execute(
+        'SELECT test_id FROM Appointment_Tests WHERE appointment_id = ? LIMIT 1',
+        [appointment_id]
+      );
+      
+      if (tests.length > 0) {
+        testIdToUse = tests[0].test_id;
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: 'معرّف التحليل مطلوب. يرجى تحديد التحليل المراد رفع نتيجته.'
+        });
+      }
+    }
+
+    // التحقق من وجود نتيجة مسبقاً
     const [existing] = await db.execute(
-      'SELECT result_id FROM Test_Results WHERE appointment_id = ?',
-      [appointment_id]
+      'SELECT result_id FROM Test_Results WHERE appointment_id = ? AND test_id = ?',
+      [appointment_id, testIdToUse]
     );
 
     if (existing.length > 0) {
-      // Update existing result
+      // تحديث النتيجة الموجودة
       await db.execute(
-        'UPDATE Test_Results SET result_file_url = ?, uploaded_at = CURRENT_TIMESTAMP WHERE appointment_id = ?',
-        [result_file_url, appointment_id]
+        `UPDATE Test_Results 
+         SET result_file_url = ?, uploaded_at = CURRENT_TIMESTAMP 
+         WHERE appointment_id = ? AND test_id = ?`,
+        [result_file_url, appointment_id, testIdToUse]
       );
     } else {
-      // Insert new result
+      // إدراج نتيجة جديدة
       await db.execute(
-        'INSERT INTO Test_Results (appointment_id, result_file_url) VALUES (?, ?)',
-        [appointment_id, result_file_url]
+        `INSERT INTO Test_Results (appointment_id, test_id, result_file_url, uploaded_at) 
+         VALUES (?, ?, ?, NOW())`,
+        [appointment_id, testIdToUse, result_file_url]
       );
     }
 
-    // If all tests have results, update appointment status to completed
+    // التحقق من اكتمال جميع نتائج التحاليل للموعد
+    const [allTests] = await db.execute(
+      `SELECT COUNT(*) as total FROM Appointment_Tests WHERE appointment_id = ?`,
+      [appointment_id]
+    );
+
+    const [completedResults] = await db.execute(
+      `SELECT COUNT(*) as completed FROM Test_Results WHERE appointment_id = ?`,
+      [appointment_id]
+    );
+
+    // إذا تم رفع جميع النتائج، تحديث حالة الموعد إلى "Completed"
+    if (allTests[0].total === completedResults[0].completed && allTests[0].total > 0) {
       await db.execute(
         'UPDATE Appointments SET status = "Completed" WHERE appointment_id = ?',
         [appointment_id]
       );
+    }
 
     res.json({
       success: true,
       message: 'تم رفع نتائج التحاليل بنجاح'
     });
+
   } catch (error) {
     console.error('Error uploading test results:', error);
     res.status(500).json({
       success: false,
-      message: 'فشل في رفع نتائج التحاليل'
+      message: 'فشل في رفع نتائج التحاليل',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
+
+// دالة إضافية لرفع نتيجة مع test_id محدد بوضوح
+exports.uploadResultWithTestId = async (req, res) => {
+  try {
+    const { appointment_id, test_id, result_file_url } = req.body;
+
+    // التحقق من البيانات المطلوبة
+    if (!appointment_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'معرّف الموعد مطلوب'
+      });
+    }
+
+    if (!test_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'معرّف التحليل مطلوب'
+      });
+    }
+
+    if (!result_file_url) {
+      return res.status(400).json({
+        success: false,
+        message: 'رابط ملف النتيجة مطلوب'
+      });
+    }
+
+    // التحقق من وجود نتيجة مسبقاً
+    const [existing] = await db.execute(
+      'SELECT result_id FROM Test_Results WHERE appointment_id = ? AND test_id = ?',
+      [appointment_id, test_id]
+    );
+
+    if (existing.length > 0) {
+      await db.execute(
+        `UPDATE Test_Results 
+         SET result_file_url = ?, uploaded_at = CURRENT_TIMESTAMP 
+         WHERE appointment_id = ? AND test_id = ?`,
+        [result_file_url, appointment_id, test_id]
+      );
+    } else {
+      await db.execute(
+        `INSERT INTO Test_Results (appointment_id, test_id, result_file_url, uploaded_at) 
+         VALUES (?, ?, ?, NOW())`,
+        [appointment_id, test_id, result_file_url]
+      );
+    }
+
+    res.json({
+      success: true,
+      message: 'تم رفع نتيجة التحليل بنجاح'
+    });
+
+  } catch (error) {
+    console.error('Error uploading result with test ID:', error);
+    res.status(500).json({
+      success: false,
+      message: 'فشل في رفع نتيجة التحليل'
+    });
+  }
+};
+
+module.exports = exports;

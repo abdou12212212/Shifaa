@@ -245,36 +245,55 @@ const updatePatient = async (req, res) => {
     }
 };
 
-// Delete patient
+// Delete patient (HARD DELETE - permanently remove from database)
 const deletePatient = async (req, res) => {
     try {
         const { patientId } = req.params;
 
-        // Check if patient has active appointments
-        const [activeAppointments] = await db.query(`
+        // Check if patient has any appointments (past or future)
+        const [appointments] = await db.query(`
             SELECT COUNT(*) as count FROM Appointments 
-            WHERE patient_id = ? AND status IN ('Pending Confirmation', 'Upcoming', 'In Progress')
+            WHERE patient_id = ?
         `, [patientId]);
 
-        if (activeAppointments[0].count > 0) {
+        if (appointments[0].count > 0) {
             return res.status(400).json({
                 success: false,
-                message: 'Cannot delete patient with active appointments'
+                message: 'Cannot delete patient with appointment history. Please delete appointments first.'
             });
         }
 
-        // Soft delete by setting is_active to false
-        await db.query(`
-            UPDATE Users 
-            SET is_active = FALSE 
-            WHERE user_id = ? AND user_type = 'Patient'
-        `, [patientId]);
+        // Start transaction
+        await db.query('START TRANSACTION');
 
-        res.json({
-            success: true,
-            message: 'Patient deactivated successfully'
-        });
+        try {
+            // Delete from Addresses first (foreign key constraint)
+            await db.query(`
+                DELETE FROM Addresses WHERE patient_id = ?
+            `, [patientId]);
+
+            // Delete from Patients table
+            await db.query(`
+                DELETE FROM Patients WHERE patient_id = ?
+            `, [patientId]);
+
+            // Delete from Users table
+            await db.query(`
+                DELETE FROM Users WHERE user_id = ? AND user_type = 'Patient'
+            `, [patientId]);
+
+            await db.query('COMMIT');
+
+            res.json({
+                success: true,
+                message: 'Patient permanently deleted successfully'
+            });
+        } catch (error) {
+            await db.query('ROLLBACK');
+            throw error;
+        }
     } catch (error) {
+        console.error('[DELETE PATIENT] Error:', error);
         res.status(500).json({ success: false, message: error.message });
     }
 };

@@ -9,12 +9,16 @@ import Login from "./components/Login"
 import ProtectedRoute from "./components/ProtectedRoute"
 import { NavigateSetter } from "./contexts/AuthContext"
 import { Routes, Route } from "react-router";
+import DoctorDashboard from './components/DoctorDashboard';
+import AssitanceDashboard from './components/Assitance';
 
 function App() {
   return (
         <>
             <NavigateSetter />
             <Routes>
+                <Route path="/doctor" element={<DoctorDashboard />} />
+                <Route path="/assistance" element={<AssitanceDashboard />} />
                 <Route path="/login" element={<Login />} />
                 <Route path="/*" element={
                     <div className="flex flex-row-reverse">

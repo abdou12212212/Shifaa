@@ -1,43 +1,85 @@
 import React, { useState, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { FaTrash, FaSpinner, FaTimes, FaEye } from 'react-icons/fa';
-import { useAppointments } from '../../contexts/AppointmentContext';
+import { useApi } from '../../services/api';
 import AppointmentModal from '../common/AppointmentModal';
 import StatusBadge from '../common/StatusBadge';
 import { formatAppointmentDateTime, formatAddress, APPOINTMENT_STATUS } from '../../services/appointmentApi';
 
 const Previous = forwardRef(({ filters }, ref) => {
-    const {
-        appointments,
-        loading,
-        error,
-        fetchAppointments,
-        deleteAppointment,
-        clearError
-    } = useAppointments();
-
+    const { apiCall } = useApi();
+    const [appointments, setAppointments] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [appointmentToDelete, setAppointmentToDelete] = useState(null);
     const [showViewModal, setShowViewModal] = useState(false);
     const [selectedAppointment, setSelectedAppointment] = useState(null);
 
-    // Fetch completed appointments on mount and when filters change
-    useEffect(() => {
-        const filtersWithStatus = {
-            ...filters,
-            status: APPOINTMENT_STATUS.COMPLETED
-        };
-        fetchAppointments(filtersWithStatus);
-    }, [filters]);
+    // Fetch appointments - Completed and Cancelled
+const fetchPreviousAppointments = async () => {
+    try {
+        setLoading(true);
+        const response = await apiCall('/appointment/status/old');
+        
+        console.log('[Previous] API Response:', response);
+        
+        if (response.success) {
+            // ✅ عرض المكتملة والملغاة
+            const previousAppointments = response.data.filter(apt => 
+                apt.status === 'Completed' || apt.status === 'Cancelled'
+            );
+            console.log('[Previous] Completed + Cancelled:', previousAppointments);
+            setAppointments(previousAppointments);
+        } else {
+            setError(response.msg || 'فشل في جلب البيانات');
+        }
+    } catch (err) {
+        console.error('[Previous] Error:', err);
+        setError('خطأ في الاتصال بالخادم');
+    } finally {
+        setLoading(false);
+    }
+};
+
+    // Fetch on mount
+   // في Previous.js
+useEffect(() => {
+    const fetchData = async () => {
+        try {
+            setLoading(true);
+            const token = localStorage.getItem('token');
+            
+            // ✅ استخدم المسار الصحيح
+            const response = await fetch('http://localhost:3000/appointment/status/old', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await response.json();
+            
+            if (data.success) {
+                // ✅ المكتملة والملغاة
+                const filtered = data.data.filter(apt => 
+                    apt.status === 'Completed' || apt.status === 'Cancelled'
+                );
+                setAppointments(filtered);
+            }
+        } catch (err) {
+            console.error(err);
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+    
+    fetchData();
+}, [filters]);
 
     // Expose methods to parent component
     useImperativeHandle(ref, () => ({
-        openAddForm: () => {}, // Previous appointments don't need add functionality
         applyFilters: (newFilters) => {
-            const filtersWithStatus = {
-                ...newFilters,
-                status: APPOINTMENT_STATUS.COMPLETED
-            };
-            fetchAppointments(filtersWithStatus);
+            fetchPreviousAppointments();
+        },
+        refreshList: () => {
+            fetchPreviousAppointments();
         }
     }));
 
@@ -49,10 +91,21 @@ const Previous = forwardRef(({ filters }, ref) => {
 
     const confirmDelete = async () => {
         if (appointmentToDelete) {
-            const result = await deleteAppointment(appointmentToDelete.appointment_id);
-            if (result.success) {
-                setShowDeleteConfirm(false);
-                setAppointmentToDelete(null);
+            try {
+                const response = await apiCall(`/admin/appointments/${appointmentToDelete.appointment_id}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.success) {
+                    setAppointments(prev => prev.filter(apt => apt.appointment_id !== appointmentToDelete.appointment_id));
+                    setShowDeleteConfirm(false);
+                    setAppointmentToDelete(null);
+                } else {
+                    alert(response.msg || 'فشل في الحذف');
+                }
+            } catch (err) {
+                console.error('Delete error:', err);
+                alert('خطأ في الاتصال بالخادم');
             }
         }
     };
@@ -62,7 +115,7 @@ const Previous = forwardRef(({ filters }, ref) => {
         setAppointmentToDelete(null);
     };
 
-    // Handle row click to view appointment details
+    // Handle row click
     const handleRowClick = (appointment) => {
         setSelectedAppointment(appointment);
         setShowViewModal(true);
@@ -82,10 +135,7 @@ const Previous = forwardRef(({ filters }, ref) => {
             <div className="text-center py-12">
                 <p className="text-red-600 mb-4 text-lg">{error}</p>
                 <button
-                    onClick={() => {
-                        clearError();
-                        fetchAppointments({ ...filters, status: APPOINTMENT_STATUS.COMPLETED });
-                    }}
+                    onClick={fetchPreviousAppointments}
                     className="bg-teal-600 text-white px-6 py-3 rounded-lg hover:bg-teal-700 transition-colors"
                 >
                     إعادة المحاولة
@@ -96,12 +146,11 @@ const Previous = forwardRef(({ filters }, ref) => {
 
     return (
         <div className="overflow-x-auto">
-            {/* Error Toast */}
             {error && (
                 <div className="mb-4 p-4 bg-red-100 border-l-4 border-red-500 text-red-700 rounded">
                     <div className="flex justify-between items-center">
                         <span>{error}</span>
-                        <button onClick={clearError} className="text-red-700 hover:text-red-900">
+                        <button onClick={() => setError(null)} className="text-red-700 hover:text-red-900">
                             <FaTimes />
                         </button>
                     </div>
@@ -166,7 +215,7 @@ const Previous = forwardRef(({ filters }, ref) => {
                             <tr>
                                 <td colSpan="9" className="px-6 py-12">
                                     <div className="text-center">
-                                        <p className="text-gray-500 text-lg">لا توجد مواعيد سابقة</p>
+                                        <p className="text-gray-500 text-lg">لا توجد مواعيد سابقة (مكتملة أو ملغاة)</p>
                                     </div>
                                 </td>
                             </tr>
@@ -198,7 +247,15 @@ const Previous = forwardRef(({ filters }, ref) => {
                                             {appointment.assistant_name || 'غير محدد'}
                                         </td>
                                         <td className="px-4 py-4">
-                                            <StatusBadge status={appointment.status} />
+                                            <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                                                appointment.status === 'Completed' 
+                                                ? 'bg-green-100 text-green-800 border border-green-200'
+                                                : appointment.status === 'Cancelled'
+                                                ? 'bg-red-100 text-red-800 border border-red-200'
+                                                : 'bg-gray-100 text-gray-800'
+                                                }`}>
+                                            {appointment.status === 'Completed' ? 'مكتمل' : 'ملغى'}
+                                            </span>
                                         </td>
                                         <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
                                             <div className="flex items-center gap-2 justify-center">
@@ -219,7 +276,6 @@ const Previous = forwardRef(({ filters }, ref) => {
                 </table>
             </div>
 
-            {/* Loading Overlay */}
             {loading && appointments.length > 0 && (
                 <div className="fixed bottom-4 right-4 bg-teal-600 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2">
                     <FaSpinner className="animate-spin" />

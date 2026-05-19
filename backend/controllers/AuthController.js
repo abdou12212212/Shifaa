@@ -13,9 +13,7 @@ const JWT_EXPIRES_IN = '7d';
  */
 const Register = async (req, res) => {
   console.log('[API REQUEST]', 'POST', '/api/auth/register', {
-    body: { ...req.body, password: '***' }, // Hide sensitive data
-    query: req.query,
-    params: req.params
+    body: { ...req.body, password: '***' }
   });
 
   const { fullName, phoneNumber, password, userType } = req.body;
@@ -70,10 +68,8 @@ const Register = async (req, res) => {
   } catch (err) {
     console.log('[API ERROR]', 'POST', '/api/auth/register', {
       error: err.message,
-      stack: err.stack,
       status: 500
     });
-    console.error(err);
     res.status(500).json({ msg: 'Server error during registration' });
   }
 };
@@ -85,9 +81,7 @@ const Register = async (req, res) => {
  */
 const Login = async (req, res) => {
   console.log('[API REQUEST]', 'POST', '/api/auth/login', {
-    body: { ...req.body, password: '***' }, // Hide sensitive data
-    query: req.query,
-    params: req.params
+    body: { ...req.body, password: '***' }
   });
 
   const { phoneNumber, password } = req.body;
@@ -99,16 +93,32 @@ const Login = async (req, res) => {
 
   try {
     const [users] = await pool.query(
-      'SELECT user_id, full_name, password_hash, user_type FROM Users WHERE phone_number = ?',
+      'SELECT user_id, full_name, password_hash, user_type, is_active FROM Users WHERE phone_number = ?',
       [phoneNumber]
     );
 
     if (users.length === 0) {
-      console.log('[API ERROR]', 'POST', '/api/auth/login', 'Invalid phone number');
+      console.log('[API ERROR]', 'POST', '/api/auth/login', 'User not found');
       return res.status(401).json({ msg: 'Invalid credentials' });
     }
 
     const user = users[0];
+
+    if (!user.is_active) {
+      console.log('[API ERROR]', 'POST', '/api/auth/login', 'Account is inactive', { userId: user.user_id });
+      return res.status(403).json({ msg: 'Account is deactivated. Please contact support.' });
+    }
+
+    if (!user.password_hash) {
+      console.log('[API ERROR]', 'POST', '/api/auth/login', 'Password hash is missing', { 
+        userId: user.user_id,
+        userType: user.user_type 
+      });
+      return res.status(401).json({ 
+        msg: 'No password set for this account. Please use "Forgot Password" to set a new password.' 
+      });
+    }
+
     const isMatch = await bcrypt.compare(password, user.password_hash);
     
     if (!isMatch) {
@@ -116,7 +126,11 @@ const Login = async (req, res) => {
       return res.status(401).json({ msg: 'Invalid credentials' });
     }
 
-    const token = jwt.sign({ id: user.user_id, userType: user.user_type }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    const token = jwt.sign(
+      { id: user.user_id, userType: user.user_type }, 
+      JWT_SECRET, 
+      { expiresIn: JWT_EXPIRES_IN }
+    );
 
     console.log('[API SUCCESS]', 'POST', '/api/auth/login', {
       userId: user.user_id,
@@ -135,10 +149,8 @@ const Login = async (req, res) => {
   } catch (err) {
     console.log('[API ERROR]', 'POST', '/api/auth/login', {
       error: err.message,
-      stack: err.stack,
       status: 500
     });
-    console.error(err);
     res.status(500).json({ msg: 'Server error during login' });
   }
 };
@@ -152,9 +164,7 @@ const generateOTP = () => Math.floor(1000 + Math.random() * 9000).toString();
 
 const ForgetPassword = async (req, res) => {
   console.log('[API REQUEST]', 'POST', '/api/auth/forgot-password', {
-    body: req.body,
-    query: req.query,
-    params: req.params
+    body: req.body
   });
 
   const { phoneNumber } = req.body;
@@ -165,21 +175,31 @@ const ForgetPassword = async (req, res) => {
 
   try {
     const [users] = await pool.query(
-      'SELECT user_id FROM Users WHERE phone_number = ?',
+      'SELECT user_id, password_hash FROM Users WHERE phone_number = ?',
       [phoneNumber]
     );
 
     if (users.length > 0) {
-      const otp = generateOTP();
-      const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+      const user = users[0];
+      
+      if (!user.password_hash) {
+        const salt = await bcrypt.genSalt(10);
+        const defaultPassword = await bcrypt.hash(phoneNumber.slice(-6), salt);
+        await pool.query(
+          'UPDATE Users SET password_hash = ? WHERE user_id = ?',
+          [defaultPassword, user.user_id]
+        );
+        console.log('[API INFO]', 'Set default password for user', { userId: user.user_id });
+      }
 
-      // Clear old OTPs
+      const otp = generateOTP();
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
       await pool.query(
         'DELETE FROM password_resets WHERE phone_number = ?',
         [phoneNumber]
       );
 
-      // Save new OTP
       await pool.query(
         'INSERT INTO password_resets (phone_number, otp_code, expires_at) VALUES (?, ?, ?)',
         [phoneNumber, otp, expiresAt]
@@ -191,26 +211,30 @@ const ForgetPassword = async (req, res) => {
 
       const smsUrl = `${process.env.INFOBIP_BASE_URL}/sms/2/text/advanced`;
       console.log('[API CALL START]', `POST ${smsUrl}`, { body: { to: formattedPhone, otp } });
-      await axios.post(
-        smsUrl,
-        {
-          messages: [
-            {
-              from: "Shifa",
-              destinations: [{ to: formattedPhone }],
-              text: `Your reset code is: ${otp}`,
-            },
-          ],
-        },
-        {
-          headers: {
-            Authorization: `App ${process.env.INFOBIP_API_KEY}`,
-            'Content-Type': 'application/json',
+      
+      try {
+        await axios.post(
+          smsUrl,
+          {
+            messages: [
+              {
+                from: "Shifa",
+                destinations: [{ to: formattedPhone }],
+                text: `Your reset code is: ${otp}`,
+              },
+            ],
           },
-        }
-      );
-
-      console.log('[API CALL SUCCESS]', smsUrl, { sentTo: formattedPhone, otp });
+          {
+            headers: {
+              Authorization: `App ${process.env.INFOBIP_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+        console.log('[API CALL SUCCESS]', smsUrl, { sentTo: formattedPhone, otp });
+      } catch (smsError) {
+        console.log('[API CALL ERROR]', 'SMS sending failed', { error: smsError.message });
+      }
     }
 
     res.json({
@@ -223,12 +247,14 @@ const ForgetPassword = async (req, res) => {
   }
 };
 
-
+/**
+ * @route POST /api/auth/verify-reset-code
+ * @desc Verify OTP code for password reset
+ * @access Public
+ */
 const VerifyResetCode = async (req, res) => {
   console.log('[API REQUEST]', 'POST', '/api/auth/verify-reset-code', {
-    body: { ...req.body, code: '***' }, // Hide sensitive data
-    query: req.query,
-    params: req.params
+    body: { ...req.body, code: '***' }
   });
 
   const { phoneNumber, code } = req.body;
@@ -257,7 +283,6 @@ const VerifyResetCode = async (req, res) => {
       return res.status(410).json({ msg: 'Code expired' });
     }
 
-    // Optionally delete OTP after verification
     await pool.query(
       'DELETE FROM password_resets WHERE phone_number = ?',
       [phoneNumber]
@@ -273,19 +298,20 @@ const VerifyResetCode = async (req, res) => {
   } catch (err) {
     console.log('[API ERROR]', 'POST', '/api/auth/verify-reset-code', {
       error: err.message,
-      stack: err.stack,
       status: 500
     });
-    console.error('VerifyResetCode Error:', err.message);
     res.status(500).json({ msg: 'Error verifying code' });
   }
 };
 
+/**
+ * @route POST /api/auth/reset-password
+ * @desc Reset password after OTP verification
+ * @access Public
+ */
 const ResetPassword = async (req, res) => {
   console.log('[API REQUEST]', 'POST', '/api/auth/reset-password', {
-    body: { phoneNumber: req.body.phoneNumber, newPassword: '***' }, // Hide sensitive data
-    query: req.query,
-    params: req.params
+    body: { phoneNumber: req.body.phoneNumber, newPassword: '***' }
   });
 
   const { phoneNumber, newPassword } = req.body;
@@ -293,6 +319,10 @@ const ResetPassword = async (req, res) => {
   if (!phoneNumber || !newPassword) {
     console.log('[API ERROR]', 'POST', '/api/auth/reset-password', 'Missing required fields');
     return res.status(400).json({ msg: 'Phone number and new password are required' });
+  }
+
+  if (newPassword.length < 6) {
+    return res.status(400).json({ msg: 'Password must be at least 6 characters' });
   }
 
   try {
@@ -319,11 +349,80 @@ const ResetPassword = async (req, res) => {
   } catch (err) {
     console.log('[API ERROR]', 'POST', '/api/auth/reset-password', {
       error: err.message,
-      stack: err.stack,
       status: 500
     });
-    console.error('ResetPassword Error:', err.message);
     res.status(500).json({ msg: 'Server error during password reset' });
+  }
+};
+
+/**
+ * @route POST /api/auth/set-password
+ * @desc Set password for existing user who doesn't have one (created via appointment)
+ * @access Public
+ */
+const SetPassword = async (req, res) => {
+  console.log('[API REQUEST]', 'POST', '/api/auth/set-password', {
+    body: { phoneNumber: req.body.phoneNumber, password: '***' }
+  });
+
+  const { phoneNumber, password } = req.body;
+
+  if (!phoneNumber || !password) {
+    return res.status(400).json({ msg: 'Phone number and password are required' });
+  }
+
+  if (password.length < 6) {
+    return res.status(400).json({ msg: 'Password must be at least 6 characters' });
+  }
+
+  try {
+    const [users] = await pool.query(
+      'SELECT user_id, password_hash FROM Users WHERE phone_number = ?',
+      [phoneNumber]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ msg: 'User not found' });
+    }
+
+    const user = users[0];
+
+    if (user.password_hash) {
+      return res.status(400).json({ msg: 'Password already set. Please use login instead.' });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(password, salt);
+
+    await pool.query(
+      'UPDATE Users SET password_hash = ? WHERE user_id = ?',
+      [passwordHash, user.user_id]
+    );
+
+    const token = jwt.sign(
+      { id: user.user_id, userType: 'Patient' }, 
+      JWT_SECRET, 
+      { expiresIn: JWT_EXPIRES_IN }
+    );
+
+    console.log('[API SUCCESS]', 'POST', '/api/auth/set-password', {
+      userId: user.user_id,
+      status: 200
+    });
+
+    res.json({
+      msg: 'Password set successfully',
+      token,
+      user: {
+        id: user.user_id
+      }
+    });
+
+  } catch (err) {
+    console.error('[API ERROR]', 'POST', '/api/auth/set-password', {
+      error: err.message
+    });
+    res.status(500).json({ msg: 'Server error' });
   }
 };
 
@@ -333,4 +432,5 @@ module.exports = {
   ForgetPassword,
   VerifyResetCode,
   ResetPassword,
+  SetPassword,
 };

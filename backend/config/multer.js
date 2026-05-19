@@ -1,3 +1,4 @@
+// backend/config/multer.js
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -14,8 +15,8 @@ const storage = multer.diskStorage({
     cb(null, uploadDir);
   },
   filename: function (req, file, cb) {
-    // Create unique filename: appointmentId_testId_timestamp_originalname
-    const appointmentId = req.body.appointment_id || 'unknown';
+    // Create unique filename
+    const appointmentId = req.params.id || req.body.appointment_id || 'unknown';
     const testId = req.body.test_id || 'unknown';
     const timestamp = Date.now();
     const ext = path.extname(file.originalname);
@@ -27,7 +28,7 @@ const storage = multer.diskStorage({
   }
 });
 
-// File filter to accept only PDF and image files
+// File filter
 const fileFilter = (req, file, cb) => {
   const allowedTypes = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'];
 
@@ -43,7 +44,7 @@ const upload = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB max file size
+    fileSize: 10 * 1024 * 1024 // 10MB
   }
 });
 

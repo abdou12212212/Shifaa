@@ -11,23 +11,11 @@ const ResultUploadModal = ({ isOpen, onClose, appointment, onUpload }) => {
     const testResultsApi = useTestResultsApi();
     const [selectedFile, setSelectedFile] = useState(null);
     const [filePreview, setFilePreview] = useState(null);
-    const [selectedTestId, setSelectedTestId] = useState('');
     const [uploading, setUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(0);
     const [error, setError] = useState(null);
 
     if (!isOpen || !appointment) return null;
-
-    // Parse test IDs from comma-separated string
-    const testIds = appointment.test_ids ? appointment.test_ids.split(',').map(id => id.trim()) : [];
-    const testNames = appointment.test_names ? appointment.test_names.split(',').map(name => name.trim()) : [];
-    const testCodes = appointment.test_codes ? appointment.test_codes.split(',').map(code => code.trim()) : [];
-
-    const tests = testIds.map((id, index) => ({
-        id,
-        name: testNames[index] || '',
-        code: testCodes[index] || ''
-    }));
 
     const handleFileSelect = (e) => {
         const file = e.target.files[0];
@@ -78,44 +66,64 @@ const ResultUploadModal = ({ isOpen, onClose, appointment, onUpload }) => {
         setError(null);
 
         try {
-            // Step 1: Upload file to server
-            const uploadResponse = await testResultsApi.uploadFile(
-                selectedFile,
-                appointment.appointment_id,
-                selectedTestId,
-                (progress) => setUploadProgress(progress)
-            );
+            // استخدام أول test_id من الموعد إذا وجد
+            let testId = null;
+            
+            // محاولة الحصول على test_id من appointment
+            if (appointment.test_ids) {
+                const testIds = appointment.test_ids.split(',').map(id => id.trim());
+                testId = testIds[0];
+            } else if (appointment.test_id) {
+                testId = appointment.test_id;
+            }
+            
+            if (!testId) {
+                throw new Error('لا يوجد فحص مرتبط بهذا الموعد');
+            }
+            
+            const formData = new FormData();
+            formData.append('test_id', testId);
+            formData.append('resultFile', selectedFile);
 
-            if (!uploadResponse.success) {
-                throw new Error(uploadResponse.message || 'فشل رفع الملف');
+            const token = localStorage.getItem('token');
+            const API_BASE_URL = 'http://localhost:3000';
+            const url = `${API_BASE_URL}/appointment/${appointment.appointment_id}/results`;
+            
+            console.log('[Upload] URL:', url);
+            console.log('[Upload] Test ID:', testId);
+            console.log('[Upload] File:', selectedFile.name);
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
+                body: formData
+            });
+
+            console.log('[Upload] Response status:', response.status);
+
+            const responseText = await response.text();
+            console.log('[Upload] Response text:', responseText);
+
+            if (!response.ok) {
+                throw new Error(`Server error: ${response.status} - ${responseText}`);
             }
 
-            // Step 2: Save file URL to database
-            const saveResponse = await testResultsApi.saveTestResult(
-                appointment.appointment_id,
-                selectedTestId,
-                uploadResponse.data.fileUrl
-            );
+            const data = JSON.parse(responseText);
 
-            if (!saveResponse.success) {
-                throw new Error(saveResponse.message || 'فشل حفظ النتيجة');
+            if (data.success) {
+                setUploadProgress(100);
+                if (onUpload && typeof onUpload === 'function') {
+                    await onUpload(appointment.appointment_id, testId, data.data?.fileUrl);
+                }
+                alert('✅ تم رفع النتيجة بنجاح');
+                onClose();
+            } else {
+                throw new Error(data.msg || 'فشل رفع الملف');
             }
-
-            // Step 3: Call onUpload callback if provided
-            if (onUpload) {
-                await onUpload(appointment.appointment_id, selectedTestId, uploadResponse.data.fileUrl);
-            }
-
-            // Reset form and close
-            setSelectedFile(null);
-            setFilePreview(null);
-            setSelectedTestId('');
-            setUploadProgress(0);
-
-            alert('تم رفع النتيجة بنجاح');
-            onClose();
         } catch (error) {
-            console.error('Error uploading file:', error);
+            console.error('[Upload] Error:', error);
             setError(error.message || 'حدث خطأ أثناء رفع الملف');
             setUploadProgress(0);
         } finally {
@@ -127,7 +135,6 @@ const ResultUploadModal = ({ isOpen, onClose, appointment, onUpload }) => {
         if (!uploading) {
             setSelectedFile(null);
             setFilePreview(null);
-            setSelectedTestId('');
             setUploadProgress(0);
             setError(null);
             onClose();
@@ -169,7 +176,7 @@ const ResultUploadModal = ({ isOpen, onClose, appointment, onUpload }) => {
                             </div>
                             <div>
                                 <span className="text-gray-600 text-sm">الفحوصات:</span>
-                                <p className="font-semibold">{appointment.test_codes}</p>
+                                <p className="font-semibold">{appointment.test_codes || appointment.test_names || 'لا يوجد'}</p>
                             </div>
                         </div>
                     </div>
@@ -182,27 +189,6 @@ const ResultUploadModal = ({ isOpen, onClose, appointment, onUpload }) => {
                                 <p className="text-sm">{error}</p>
                             </div>
                         )}
-
-                        {/* Test Selection
-                        <div>
-                            <label className="block text-right text-sm mb-2 font-semibold">
-                                اختر الفحص <span className="text-red-500">*</span>
-                            </label>
-                            <select
-                                value={selectedTestId}
-                                onChange={(e) => setSelectedTestId(e.target.value)}
-                                className="w-full px-4 py-3 bg-gray-100 rounded-xl text-right focus:outline-none focus:ring-2 focus:ring-teal-600"
-                                required
-                                disabled={uploading}
-                            >
-                                <option value="">اختر الفحص المراد رفع نتيجته</option>
-                                {tests.map((test) => (
-                                    <option key={test.id} value={test.id}>
-                                        {test.code} - {test.name}
-                                    </option>
-                                ))}
-                            </select>
-                        </div> */}
 
                         {/* File Upload Area */}
                         <div>

@@ -10,6 +10,46 @@ export const useAppointmentApi = () => {
 
     return {
         // Get all appointments with filtering
+getAppointments: async (filters = {}) => {
+    // ✅ إذا كان الفلتر يطلب المواعيد القادمة
+    if (filters.status === 'Upcoming') {
+        return await apiCall('/appointment/status/coming');
+    }
+    
+    // ✅ إذا كان الفلتر يطلب المواعيد القديمة
+    if (filters.status === 'old') {
+        return await apiCall('/appointment/status/old');
+    }
+    
+    // ✅ إذا كان الفلتر يطلب النتائج
+    if (filters.status === 'results') {
+        return await apiCall('/appointment/status/results');
+    }
+    
+    // ✅ إذا كان الفلتر يطلب المواعيد المؤكدة
+    if (filters.status === 'programmed') {
+        return await apiCall('/appointment/status/programmed');
+    }
+    
+    // ✅ الوضع الافتراضي - كل المواعيد (للوحة التحكم)
+    const params = new URLSearchParams();
+
+    if (filters.search) params.append('search', filters.search);
+    if (filters.status && filters.status !== 'all') params.append('status', filters.status);
+    if (filters.date_from) params.append('date_from', filters.date_from);
+    if (filters.date_to) params.append('date_to', filters.date_to);
+    if (filters.assistant_id) params.append('assistant_id', filters.assistant_id);
+    if (filters.doctor_id) params.append('doctor_id', filters.doctor_id);
+    if (filters.is_urgent !== undefined) params.append('is_urgent', filters.is_urgent);
+
+    const queryString = params.toString();
+    const endpoint = `/admin/appointments${queryString ? `?${queryString}` : ''}`;
+
+    return await apiCall(endpoint);
+},
+
+
+        // Get all appointments with filtering
         getAppointments: async (filters = {}) => {
             const params = new URLSearchParams();
 

@@ -36,15 +36,16 @@ export const AppointmentProvider = ({ children }) => {
     const fetchAppointments = useCallback(async (customFilters = null) => {
         try {
             setLoading(true);
-            setError(null);
+            const token = localStorage.getItem('token');
+        const response = await fetch('http://localhost:3000/appointment/status/coming', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+const data = await response.json();
 
-            const filtersToUse = customFilters || filters;
-            const response = await appointmentApi.getAppointments(filtersToUse);
-
-            if (response.success) {
-                setAppointments(response.data.appointments || []);
+            if (data.success) {
+                setAppointments(data.data || []);
             } else {
-                setError(response.message || 'فشل في جلب المواعيد');
+                setError(data.msg || 'فشل في جلب المواعيد');
             }
         } catch (err) {
             setError('خطأ في الاتصال بالخادم');

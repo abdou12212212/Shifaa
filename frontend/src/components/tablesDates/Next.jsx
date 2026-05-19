@@ -9,7 +9,7 @@ import { formatAppointmentDateTime, formatAddress, APPOINTMENT_STATUS } from '..
  * Enhanced Next Component
  * Displays upcoming appointments with full CRUD operations and real-time updates
  */
-const NextEnhanced = forwardRef(({ filters }, ref) => {
+const NextEnhanced = forwardRef(({ filters, refreshTrigger }, ref) => {
     const {
         appointments,
         loading,
@@ -31,8 +31,14 @@ const NextEnhanced = forwardRef(({ filters }, ref) => {
     const [showAssignModal, setShowAssignModal] = useState(null);
     const [showViewModal, setShowViewModal] = useState(false);
     const [selectedAppointment, setSelectedAppointment] = useState(null);
+    const [localAppointments, setLocalAppointments] = useState([]);
 
-    // Fetch appointments on mount and when filters change
+    // Sync local appointments with context appointments
+    useEffect(() => {
+        setLocalAppointments(appointments);
+    }, [appointments]);
+
+    // Fetch appointments on mount and when refreshTrigger changes
     useEffect(() => {
         const filtersWithStatus = {
             ...filters,
@@ -40,7 +46,7 @@ const NextEnhanced = forwardRef(({ filters }, ref) => {
         };
         fetchAppointments(filtersWithStatus);
         fetchAvailableAssistants();
-    }, [filters]);
+    }, [filters, refreshTrigger]); // Add refreshTrigger to re-fetch when needed
 
     // Expose methods to parent component
     useImperativeHandle(ref, () => ({
@@ -50,10 +56,71 @@ const NextEnhanced = forwardRef(({ filters }, ref) => {
                 status: APPOINTMENT_STATUS.UPCOMING
             };
             fetchAppointments(filtersWithStatus);
+        },
+        // ✅ دالة لإضافة موعد جديد مباشرة (بدون إعادة جلب)
+        addAppointmentDirectly: (newAppointment) => {
+            console.log('[NextEnhanced] Adding appointment directly:', newAppointment);
+            
+            // تأكد من أن الموعد قادم (Upcoming)
+            if (newAppointment.status === APPOINTMENT_STATUS.UPCOMING || 
+                newAppointment.status === 'Upcoming') {
+                
+                // أضف الموعد إلى القائمة المحلية فوراً
+                setLocalAppointments(prev => {
+                    // تأكد من عدم وجود تكرار
+                    const exists = prev.some(apt => apt.appointment_id === newAppointment.appointment_id);
+                    if (exists) return prev;
+                    
+                    // أضف الموعد الجديد في البداية (مرتب حسب التاريخ)
+                    const newList = [newAppointment, ...prev];
+                    // رتب حسب التاريخ
+                    newList.sort((a, b) => 
+                        new Date(a.appointment_datetime) - new Date(b.appointment_datetime)
+                    );
+                    return newList;
+                });
+                
+                // ✅ نجاح - بدون إعادة جلب من الخادم
+                return true;
+            }
+            return false;
+        },
+        // ✅ دالة لإعادة تحميل القائمة من الخادم (عند الحاجة)
+        refreshList: () => {
+            const filtersWithStatus = {
+                ...filters,
+                status: APPOINTMENT_STATUS.UPCOMING
+            };
+            fetchAppointments(filtersWithStatus);
         }
     }));
 
-    // Handle delete
+    // Listen for global appointment added event
+    useEffect(() => {
+        const handleAppointmentAdded = (event) => {
+            console.log('[NextEnhanced] Global event: appointmentAdded', event.detail);
+            if (event.detail && event.detail.appointment) {
+                const newAppointment = event.detail.appointment;
+                if (newAppointment.status === APPOINTMENT_STATUS.UPCOMING || 
+                    newAppointment.status === 'Upcoming') {
+                    setLocalAppointments(prev => {
+                        const exists = prev.some(apt => apt.appointment_id === newAppointment.appointment_id);
+                        if (exists) return prev;
+                        const newList = [newAppointment, ...prev];
+                        newList.sort((a, b) => 
+                            new Date(a.appointment_datetime) - new Date(b.appointment_datetime)
+                        );
+                        return newList;
+                    });
+                }
+            }
+        };
+
+        window.addEventListener('appointmentAdded', handleAppointmentAdded);
+        return () => window.removeEventListener('appointmentAdded', handleAppointmentAdded);
+    }, []);
+
+    // Handle delete - update local state after deletion
     const handleDeleteClick = (appointment) => {
         setAppointmentToDelete(appointment);
         setShowDeleteConfirm(true);
@@ -63,6 +130,10 @@ const NextEnhanced = forwardRef(({ filters }, ref) => {
         if (appointmentToDelete) {
             const result = await deleteAppointment(appointmentToDelete.appointment_id);
             if (result.success) {
+                // Remove from local state
+                setLocalAppointments(prev => prev.filter(
+                    apt => apt.appointment_id !== appointmentToDelete.appointment_id
+                ));
                 setShowDeleteConfirm(false);
                 setAppointmentToDelete(null);
             }
@@ -74,7 +145,7 @@ const NextEnhanced = forwardRef(({ filters }, ref) => {
         setAppointmentToDelete(null);
     };
 
-    // Handle edit
+    // Handle edit - update local state after save
     const startEdit = (appointment) => {
         setEditingId(appointment.appointment_id);
         setEditData({
@@ -87,6 +158,12 @@ const NextEnhanced = forwardRef(({ filters }, ref) => {
     const saveEdit = async (appointmentId) => {
         const result = await updateAppointment(appointmentId, editData);
         if (result.success) {
+            // Update local state with new data
+            setLocalAppointments(prev => prev.map(apt =>
+                apt.appointment_id === appointmentId
+                    ? { ...apt, ...editData }
+                    : apt
+            ));
             setEditingId(null);
             setEditData({});
         }
@@ -101,36 +178,64 @@ const NextEnhanced = forwardRef(({ filters }, ref) => {
         setEditData(prev => ({ ...prev, [field]: value }));
     };
 
-    // Handle assign assistant
     const handleAssignAssistant = async (appointmentId, assistantId) => {
         const result = await assignAssistant(appointmentId, assistantId);
         if (result.success) {
+            // Update local state with new assistant
+            const assistant = availableAssistants.find(a => a.user_id === assistantId);
+            if (assistant) {
+                setLocalAppointments(prev => prev.map(apt =>
+                    apt.appointment_id === appointmentId
+                        ? { ...apt, assistant_id: assistantId, assistant_name: assistant.full_name }
+                        : apt
+                ));
+            }
             setShowAssignModal(null);
         }
     };
 
-    // Handle status change
     const handleStatusChange = async (appointmentId, newStatus) => {
-        await updateAppointmentStatus(appointmentId, newStatus);
+        const result = await updateAppointmentStatus(appointmentId, newStatus);
+        if (result.success) {
+            setLocalAppointments(prev => prev.map(apt =>
+                apt.appointment_id === appointmentId
+                    ? { ...apt, status: newStatus }
+                    : apt
+            ));
+        }
     };
 
-    // Handle row click to view appointment details
     const handleRowClick = (appointment) => {
         setSelectedAppointment(appointment);
         setShowViewModal(true);
     };
 
-    // Filter appointments based on search query
-    const filteredAppointments = appointments.filter(appointment => {
-        if (!filters?.search) return true;
-        const query = filters.search.toLowerCase();
-        const patientName = appointment.patient_name?.toLowerCase() || '';
-        const patientPhone = appointment.patient_phone?.toLowerCase() || '';
-        const refId = appointment.appointment_ref_id?.toString().toLowerCase() || '';
-        return patientName.includes(query) || patientPhone.includes(query) || refId.includes(query);
-    });
+    // Filter appointments - فقط المواعيد القادمة (ليست مكتملة، ليست ملغاة، وتاريخها مستقبلي)
+const filteredAppointments = localAppointments.filter(appointment => {
+    // ✅ الشرط 1: استبعاد المواعيد المكتملة والملغاة
+    if (appointment.status === 'Completed' || 
+        appointment.status === 'Cancelled' ||
+        appointment.status === 'Pending Confirmation') {
+        return false;
+    }
+    
+    // ✅ الشرط 2: استبعاد المواعيد التي تاريخها ماضٍ
+    const appointmentDate = new Date(appointment.appointment_datetime);
+    const now = new Date();
+    if (appointmentDate <= now) {
+        return false;
+    }
+    
+    // ✅ الشرط 3: تطبيق البحث إذا وجد
+    if (!filters?.search) return true;
+    const query = filters.search.toLowerCase();
+    const patientName = appointment.patient_name?.toLowerCase() || '';
+    const patientPhone = appointment.patient_phone?.toLowerCase() || '';
+    const refId = appointment.appointment_ref_id?.toString().toLowerCase() || '';
+    return patientName.includes(query) || patientPhone.includes(query) || refId.includes(query);
+});
 
-    if (loading && appointments.length === 0) {
+    if (loading && localAppointments.length === 0) {
         return (
             <div className="flex items-center justify-center h-64">
                 <FaSpinner className="animate-spin text-3xl text-teal-600 mr-3" />
@@ -139,7 +244,7 @@ const NextEnhanced = forwardRef(({ filters }, ref) => {
         );
     }
 
-    if (error && appointments.length === 0) {
+    if (error && localAppointments.length === 0) {
         return (
             <div className="text-center py-12">
                 <p className="text-red-600 mb-4 text-lg">{error}</p>
@@ -425,7 +530,7 @@ const NextEnhanced = forwardRef(({ filters }, ref) => {
             </div>
 
             {/* Loading Overlay */}
-            {loading && appointments.length > 0 && (
+            {loading && localAppointments.length > 0 && (
                 <div className="fixed bottom-4 right-4 bg-teal-600 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2">
                     <FaSpinner className="animate-spin" />
                     <span>جاري التحديث...</span>

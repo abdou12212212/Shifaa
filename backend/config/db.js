@@ -1,4 +1,4 @@
-const mysql = require('mysql2/promise'); // ✅ use /promise version
+const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 require('dotenv').config();
 
@@ -31,19 +31,16 @@ const createFirstAdmin = async () => {
     if (admins.length === 0) {
       console.log('[DB INIT] No admin user found. Creating default admin...');
 
-      // Default admin credentials
       const defaultAdmin = {
         full_name: 'Anes Khelil',
         email: 'aneskhalil@gmail.com',
         phone_number: '0699444768',
-        password: '@Anes Khelil 1414', // Default password
+        password: '@Anes Khelil 1414',
         user_type: 'Admin'
       };
 
-      // Hash the password
       const hashedPassword = await bcrypt.hash(defaultAdmin.password, 10);
 
-      // Insert into Users table
       const [userResult] = await connection.query(
         `INSERT INTO Users (full_name, email, phone_number, password_hash, user_type, is_active, created_at)
          VALUES (?, ?, ?, ?, ?, ?, NOW())`,
@@ -53,27 +50,88 @@ const createFirstAdmin = async () => {
           defaultAdmin.phone_number,
           hashedPassword,
           defaultAdmin.user_type,
-          1 // is_active
+          1
         ]
       );
 
       const adminUserId = userResult.insertId;
 
-      // Insert into Admins table
       await connection.query(
         'INSERT INTO Admins (admin_id) VALUES (?)',
         [adminUserId]
       );
 
-      console.log('[DB INIT] ✅ Default admin created successfully!');
-      console.log('[DB INIT] Email:', defaultAdmin.email);
+      console.log('[DB INIT] Default admin created successfully!');
+      console.log('[DB INIT] Phone:', defaultAdmin.phone_number);
       console.log('[DB INIT] Password:', defaultAdmin.password);
-      console.log('[DB INIT] ⚠️  Please change the password after first login!');
+      console.log('[DB INIT] Please change the password after first login!');
     } else {
-      console.log('[DB INIT] ✅ Admin user exists. Skipping admin creation.');
+      console.log('[DB INIT] Admin user exists. Checking password...');
+      
+      const [adminUser] = await connection.query(
+        'SELECT user_id, password_hash FROM Users WHERE user_id = ?',
+        [admins[0].user_id]
+      );
+      
+      if (adminUser.length > 0 && !adminUser[0].password_hash) {
+        console.log('[DB INIT] Admin has no password. Setting default password...');
+        
+        const defaultPassword = '@Anes Khelil 1414';
+        const hashedPassword = await bcrypt.hash(defaultPassword, 10);
+        
+        await connection.query(
+          'UPDATE Users SET password_hash = ? WHERE user_id = ?',
+          [hashedPassword, adminUser[0].user_id]
+        );
+        
+        console.log('[DB INIT] Admin password set successfully!');
+        console.log('[DB INIT] Phone: 0699444768');
+        console.log('[DB INIT] Password:', defaultPassword);
+        console.log('[DB INIT] Please change the password after first login!');
+      } else if (adminUser.length > 0 && adminUser[0].password_hash) {
+        console.log('[DB INIT] Admin password hash exists. Skipping password update.');
+      } else {
+        console.log('[DB INIT] Admin user not found in Users table.');
+      }
     }
   } catch (error) {
-    console.error('[DB INIT] ❌ Error creating first admin:', error.message);
+    console.error('[DB INIT] Error creating first admin:', error.message);
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
+/**
+ * Fix any users without password_hash (created via appointments)
+ */
+const fixMissingPasswords = async () => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    
+    const [usersWithoutPassword] = await connection.query(
+      'SELECT user_id, phone_number, user_type FROM Users WHERE password_hash IS NULL'
+    );
+    
+    if (usersWithoutPassword.length > 0) {
+      console.log(`[DB INIT] Found ${usersWithoutPassword.length} user(s) without password. Setting default passwords...`);
+      
+      for (const user of usersWithoutPassword) {
+        const defaultPassword = user.phone_number.slice(-6);
+        const hashedPassword = await bcrypt.hash(defaultPassword, 10);
+        
+        await connection.query(
+          'UPDATE Users SET password_hash = ? WHERE user_id = ?',
+          [hashedPassword, user.user_id]
+        );
+        
+        console.log(`[DB INIT] Set password for user ${user.user_id} (${user.user_type})`);
+      }
+      
+      console.log('[DB INIT] All missing passwords have been set!');
+    }
+  } catch (error) {
+    console.error('[DB INIT] Error fixing missing passwords:', error.message);
   } finally {
     if (connection) connection.release();
   }
@@ -82,14 +140,14 @@ const createFirstAdmin = async () => {
 // Test database connection and create admin if needed
 pool.getConnection()
   .then(connection => {
-    console.log('[DB] ✅ Database connected successfully');
+    console.log('[DB] Database connected successfully');
     connection.release();
 
-    // Create first admin after successful connection
     createFirstAdmin();
+    fixMissingPasswords();
   })
   .catch(err => {
-    console.error('[DB] ❌ Database connection failed:', err.message);
+    console.error('[DB] Database connection failed:', err.message);
     process.exit(1);
   });
 

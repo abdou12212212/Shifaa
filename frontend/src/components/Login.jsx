@@ -24,13 +24,23 @@ const Login = () => {
     try {
         const result = await login(phoneNumber, password);
         
-        console.log("RESULT:", result); // باش نشوفو
+        console.log("RESULT:", result); 
 
         if (!result.success) {
             setError(result.error);
         } else {
+            const user = result.user;
+
+        if (user.userType === 'Admin') {
+            navigate("/");
+        } else if (user.userType === 'Doctor') {
+            navigate("/doctor");
+        } else if (user.userType === 'Assistant') {
+            navigate("/assistance");
+        } else {
             navigate("/");
         }
+        }       
 
     } catch (err) {
         console.error("LOGIN ERROR:", err);

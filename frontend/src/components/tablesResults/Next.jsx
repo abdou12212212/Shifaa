@@ -78,37 +78,34 @@ function Next({ searchTerm = '', filters = {} }) {
     }
   };
 
-  // Upload test results
-  const uploadTestResults = async (appointmentId, testId, fileUrl) => {
-    try {
-      const data = await apiCall("/admin/tests/results", {
-        method: "POST",
-        body: JSON.stringify({
-          appointment_id: appointmentId,
-          test_id: testId,
-          result_file_url: fileUrl,
-        }),
-      });
-
-      if (data.success) {
-        alert("تم رفع نتائج التحاليل بنجاح");
-        setShowUploadModal(false);
-        fetchAppointments(); // Refresh the list
-      } else {
-        alert("فشل في رفع نتائج التحاليل");
-      }
-    } catch (err) {
-      alert("خطأ في الاتصال بالخادم");
-      console.error("[API ERROR]", "/admin/tests/results", err);
-    }
-  };
-
+  // Upload test results - تعديل لاستخدام FormData
+const uploadTestResults = async (appointmentId, testId, fileUrl) => {
+    // ✅ بما أن الملف تم رفعه بالفعل وحفظه في قاعدة البيانات،
+    // فقط نقوم بتحديث الواجهة وإغلاق المودال
+    console.log('[uploadTestResults] Result uploaded successfully:', { 
+        appointmentId, 
+        testId, 
+        fileUrl 
+    });
+    
+    // إغلاق مودال الرفع
+    setShowUploadModal(false);
+    
+    // تحديث قائمة المواعيد لعرض التغييرات (مثل تغيير الحالة إلى Completed)
+    await fetchAppointments();
+    
+    return { success: true };
+};
   useEffect(() => {
     fetchAppointments();
   }, []);
 
   // Filter appointments based on search term
-  const filteredAppointments = appointments.filter(appointment => {
+ const filteredAppointments = appointments.filter(appointment => {
+    if (appointment.status === 'Completed') return false;
+    if (appointment.status === 'Cancelled') return false;
+    
+    // ✅ تطبيق البحث
     if (!searchTerm) return true;
 
     const search = searchTerm.toLowerCase();
@@ -119,7 +116,7 @@ function Next({ searchTerm = '', filters = {} }) {
       appointment.test_codes?.toLowerCase().includes(search) ||
       appointment.assistant_name?.toLowerCase().includes(search)
     );
-  });
+});
 
   const handleEdit = (appointment) => {
     setSelectedAppointment(appointment);
