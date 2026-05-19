@@ -44,7 +44,7 @@ app.use('/admin', Admin1Routes)
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 //Server
-const PORT = process.env.PORT || 10000;
-app.listen(PORT,'0.0.0.0', () => {
+const PORT = process.env.PORT || 4000;
+app.listen(PORT, () => {
   console.log(`Server running on ${PORT}`);
 });
