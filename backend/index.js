@@ -19,6 +19,16 @@ const NotificationRoutes = require('./routes/NotificationRoutes')
 const PatientRoutes = require('./routes/PatientRoutes')
 const TestRoutes = require('./routes/TestRoutes')
 const Admin1Routes = require('./routes/Admin/AdminRoutes')
+const path = require('path');
+
+// بعد تعريف الـ API routes...
+app.use(express.static(path.join(__dirname, '../frontend/dist')));
+
+// أي route مش موجود في API يودي لـ index.html تاع React
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../frontend/dist', 'index.html'));
+});
+
 
 
 //MIddlewares
